@@ -19,9 +19,11 @@ import {
   Search,
   ShieldAlert,
   ShieldCheck,
+  Target,
 } from "lucide-react";
 
 import {
+  Fragment,
   useMemo,
   useState,
 } from "react";
@@ -380,91 +382,6 @@ function downloadFile(
 }
 
 
-
-/* ============================================================
-   CBOM EXPORT
-   ============================================================ */
-
-function buildEcdatCbom(
-  scanResult,
-  artifacts
-) {
-  if (
-    scanResult?.cbom &&
-    typeof scanResult.cbom === "object"
-  ) {
-    return scanResult.cbom;
-  }
-
-  const components =
-    artifacts.map(
-      (artifact, index) => ({
-        type: "cryptographic-asset",
-        "bom-ref":
-          `ecdat-crypto-${index + 1}`,
-        name:
-          artifact.algorithm ||
-          artifact.category ||
-          `Cryptographic Asset ${index + 1}`,
-        properties: [
-          ["file", artifact.file],
-          ["line", artifact.line],
-          ["category", artifact.category],
-          ["key_size", artifact.key_size],
-          ["mode", artifact.mode],
-          [
-            "quantum_status",
-            artifact.quantum_status,
-          ],
-          ["risk", artifact.risk],
-          [
-            "business_criticality",
-            artifact.business_criticality,
-          ],
-          [
-            "recommendation",
-            artifact.recommendation,
-          ],
-        ]
-          .filter(
-            ([, value]) =>
-              value !== undefined &&
-              value !== null &&
-              value !== ""
-          )
-          .map(
-            ([name, value]) => ({
-              name,
-              value: String(value),
-            })
-          ),
-      })
-    );
-
-  return {
-    bomFormat: "ECDAT-CBOM",
-    specVersion: "1.0",
-    version: 1,
-    serialNumber:
-      `urn:uuid:ecdat-${Date.now()}`,
-    metadata: {
-      timestamp:
-        new Date().toISOString(),
-      tool: {
-        vendor: "ECDAT",
-        name:
-          "Cryptographic Discovery & Assessment Toolkit",
-      },
-      source:
-        scanResult?.input?.name ||
-        "Uploaded project",
-    },
-    summary:
-      scanResult?.summary || {},
-    components,
-  };
-}
-
 /* ============================================================
    SUMMARY CARD
    ============================================================ */
@@ -475,13 +392,12 @@ function DashboardSummary({
   description,
   icon,
   light = false,
-  tone = "",
 }) {
   return (
     <div
       className={`dashboard-summary-card ${
         light ? "light" : ""
-      } ${tone}`}
+      }`}
     >
       <div className="summary-top">
         <span>
@@ -500,6 +416,44 @@ function DashboardSummary({
       <small>
         {description}
       </small>
+    </div>
+  );
+}
+
+
+/* ============================================================
+   RISK BAR
+   ============================================================ */
+
+function RiskBar({
+  label,
+  value,
+  max,
+  className,
+}) {
+  return (
+    <div className="risk-row">
+      <div>
+        <span>
+          {label}
+        </span>
+
+        <strong>
+          {value}
+        </strong>
+      </div>
+
+      <div className="risk-track">
+        <div
+          className={`risk-fill ${className}`}
+          style={{
+            width: `${
+              (value / max) *
+              100
+            }%`,
+          }}
+        />
+      </div>
     </div>
   );
 }
@@ -564,14 +518,14 @@ function Dashboard() {
   ] = useState("ALL");
 
   const [
-    expandedArtifactIndex,
-    setExpandedArtifactIndex,
-  ] = useState(null);
-
-  const [
     pdfLoading,
     setPdfLoading,
   ] = useState(false);
+
+  const [
+    expandedArtifactId,
+    setExpandedArtifactId,
+  ] = useState(null);
 
 
   /* ==========================================================
@@ -592,30 +546,17 @@ function Dashboard() {
       risk_score: 0,
     };
 
-  const files = useMemo(
-    () => scanResult?.files || [],
-    [scanResult]
-  );
+  const files =
+    scanResult?.files || [];
 
-  const artifacts = useMemo(
-    () => scanResult?.artifacts || [],
-    [scanResult]
-  );
+  const artifacts =
+    scanResult?.artifacts || [];
 
   const posture =
     summary.security_posture ||
     derivePosture(
       summary
     );
-
-  const quantumExposure =
-    summary.crypto_assets > 0
-      ? Math.round(
-          ((summary.quantum_vulnerable || 0) /
-            summary.crypto_assets) *
-            100
-        )
-      : 0;
 
 
   /* ==========================================================
@@ -764,6 +705,33 @@ function Dashboard() {
 
 
   /* ==========================================================
+     RISK DATA
+     ========================================================== */
+
+  const maxRisk =
+    Math.max(
+      summary.critical || 0,
+      summary.high || 0,
+      summary.medium || 0,
+      summary.low || 0,
+      1
+    );
+
+  const quantumExposure =
+    summary.crypto_assets >
+    0
+      ? Math.round(
+          (
+            (summary.quantum_vulnerable ||
+              0) /
+            summary.crypto_assets
+          ) *
+            100
+        )
+      : 0;
+
+
+  /* ==========================================================
      RECOMMENDATION COUNTS
      ========================================================== */
 
@@ -810,6 +778,30 @@ function Dashboard() {
             b.count -
             a.count
         );
+    }, [artifacts]);
+
+
+  /* ==========================================================
+     BUSINESS CRITICALITY
+     ========================================================== */
+
+  const businessCounts =
+    useMemo(() => {
+      const counts = {};
+
+      artifacts.forEach(
+        (artifact) => {
+          const value =
+            artifact.business_criticality ||
+            "MEDIUM";
+
+          counts[value] =
+            (counts[value] ||
+              0) + 1;
+        }
+      );
+
+      return counts;
     }, [artifacts]);
 
 
@@ -1004,30 +996,6 @@ function Dashboard() {
   };
 
 
-
-  /* ==========================================================
-     EXPORT CBOM
-     ========================================================== */
-
-  const exportCBOM = () => {
-    const cbom =
-      buildEcdatCbom(
-        scanResult,
-        artifacts
-      );
-
-    downloadFile(
-      JSON.stringify(
-        cbom,
-        null,
-        2
-      ),
-      "ecdat-cbom.json",
-      "application/json"
-    );
-  };
-
-
   /* ==========================================================
      EXPORT PDF
      ========================================================== */
@@ -1142,14 +1110,14 @@ function Dashboard() {
 
           <button
             className="dashboard-rail-item"
-            title="Algorithm footprint"
+            title="Risk"
             onClick={() =>
               scrollTo(
                 "risk-analysis"
               )
             }
           >
-            <BarChart3
+            <ShieldAlert
               size={19}
             />
           </button>
@@ -1182,19 +1150,6 @@ function Dashboard() {
             <Lightbulb
               size={19}
             />
-          </button>
-
-
-          <button
-            className="dashboard-rail-item"
-            title="CBOM"
-            onClick={() =>
-              scrollTo(
-                "cbom"
-              )
-            }
-          >
-            <FileCode2 size={19} />
           </button>
 
 
@@ -1361,19 +1316,6 @@ function Dashboard() {
                 JSON
               </button>
 
-              <button
-                className="dashboard-secondary-button cbom-button"
-                onClick={
-                  exportCBOM
-                }
-                disabled={
-                  !artifacts.length
-                }
-              >
-                <FileCode2 size={14} />
-                CBOM
-              </button>
-
 
               <button
                 className="dashboard-primary-button"
@@ -1462,7 +1404,6 @@ function Dashboard() {
                 />
               }
               light
-              tone="files-tile"
             />
 
 
@@ -1477,7 +1418,6 @@ function Dashboard() {
                   size={16}
                 />
               }
-              tone="crypto-tile"
             />
 
 
@@ -1736,404 +1676,389 @@ function Dashboard() {
           </section>
 
 
-
           {/* ==================================================
-              CBOM EXTRACTION
+              RISK + ALGORITHM
           ================================================== */}
 
           <section
-            className="dashboard-card cbom-extraction-card"
-            id="cbom"
-          >
-
-            <div className="dashboard-card-header">
-
-              <div>
-
-                <span className="section-kicker">
-                  CBOM EXTRACTION
-                </span>
-
-                <h2>
-                  Cryptographic Bill of Materials
-                </h2>
-
-                <p className="cbom-description">
-                  Build a structured cryptographic inventory
-                  from the current scan and export it as a
-                  machine-readable JSON file.
-                </p>
-
-              </div>
-
-              <div className="cbom-header-icon">
-                <FileCode2 size={20} />
-              </div>
-
-            </div>
-
-
-            <div className="cbom-summary-grid">
-
-              <div>
-                <span>Cryptographic assets</span>
-                <strong>
-                  {summary.crypto_assets || 0}
-                </strong>
-              </div>
-
-              <div>
-                <span>Unique algorithms</span>
-                <strong>
-                  {algorithms.length}
-                </strong>
-              </div>
-
-              <div>
-                <span>Source files</span>
-                <strong>
-                  {
-                    files.filter(
-                      (file) =>
-                        file.type ===
-                        "source-code"
-                    ).length
-                  }
-                </strong>
-              </div>
-
-              <div>
-                <span>Priority findings</span>
-                <strong>
-                  {
-                    (summary.critical || 0) +
-                    (summary.high || 0)
-                  }
-                </strong>
-              </div>
-
-            </div>
-
-
-            <div className="cbom-actions">
-
-              <div className="cbom-format">
-                <span className="cbom-format-dot"></span>
-                <div>
-                  <strong>
-                    ECDAT CBOM JSON
-                  </strong>
-                  <small>
-                    Generated from the current scan result
-                  </small>
-                </div>
-              </div>
-
-
-              <button
-                className="dashboard-primary-button"
-                onClick={
-                  exportCBOM
-                }
-                disabled={
-                  !artifacts.length
-                }
-              >
-                <Download size={14} />
-                Extract CBOM
-              </button>
-
-            </div>
-
-          </section>
-
-
-          {/* ==================================================
-              ALGORITHM FOOTPRINT
-          ================================================== */}
-
-          <section
-            className="dashboard-card algorithm-footprint-card"
+            className="dashboard-two-column"
             id="risk-analysis"
           >
 
-            <div className="dashboard-card-header">
+            <div className="dashboard-card">
 
-              <div>
+              <div className="dashboard-card-header">
 
-                <span className="section-kicker">
-                  CRYPTOGRAPHIC ANALYSIS
-                </span>
+                <div>
 
-                <h2>
-                  Cryptographic Algorithm Footprint
-                </h2>
+                  <span className="section-kicker">
+                    RISK ANALYTICS
+                  </span>
 
-                <p className="algorithm-footprint-description">
-                  Frequency of detected algorithms across
-                  the scanned codebase and discovered artefacts.
-                </p>
+                  <h2>
+                    Risk distribution
+                  </h2>
+
+                </div>
 
               </div>
 
-              <div className="algorithm-chart-badge">
-                <BarChart3 size={19} />
-                <span>
-                  {algorithms.length} algorithms
-                </span>
+
+              <div className="risk-chart">
+
+                <RiskBar
+                  label="Critical"
+                  value={
+                    summary.critical
+                  }
+                  max={maxRisk}
+                  className="critical"
+                />
+
+
+                <RiskBar
+                  label="High"
+                  value={
+                    summary.high
+                  }
+                  max={maxRisk}
+                  className="high"
+                />
+
+
+                <RiskBar
+                  label="Medium"
+                  value={
+                    summary.medium
+                  }
+                  max={maxRisk}
+                  className="medium"
+                />
+
+
+                <RiskBar
+                  label="Low"
+                  value={
+                    summary.low
+                  }
+                  max={maxRisk}
+                  className="low"
+                />
+
+              </div>
+
+
+              <div className="risk-footer">
+
+                <div>
+                  <span>
+                    Quantum vulnerable
+                  </span>
+
+                  <strong>
+                    {
+                      summary.quantum_vulnerable
+                    }
+                  </strong>
+                </div>
+
+
+                <div>
+                  <span>
+                    Legacy / weak
+                  </span>
+
+                  <strong>
+                    {
+                      summary.legacy_weak
+                    }
+                  </strong>
+                </div>
+
+
+                <div>
+                  <span>
+                    Exposure
+                  </span>
+
+                  <strong>
+                    {quantumExposure}%
+                  </strong>
+                </div>
+
               </div>
 
             </div>
 
 
-            <div className="algorithm-footprint-chart">
+            <div className="dashboard-card">
 
-              <div className="chart-axis">
+              <div className="dashboard-card-header">
 
-                <span>0</span>
-                <span>
-                  {
-                    Math.max(
-                      ...(algorithms
-                        .slice(0, 8)
-                        .map(
-                          ([, count]) =>
-                            Number(count) || 0
-                        )),
-                      1
-                    )
-                  }
-                </span>
+                <div>
+
+                  <span className="section-kicker">
+                    ALGORITHM ANALYSIS
+                  </span>
+
+                  <h2>
+                    Cryptographic distribution
+                  </h2>
+
+                </div>
+
+                <BarChart3 size={18} />
 
               </div>
 
 
-              {algorithms.length ? (
-                algorithms
-                  .slice(0, 8)
-                  .map(
-                    (
-                      [name, count],
-                      index
-                    ) => {
+              <div className="algorithm-layout">
 
-                      const numericCount =
-                        Number(count) || 0;
+                <div className="algorithm-donut">
 
-                      const maxCount =
-                        Math.max(
-                          ...algorithms
-                            .slice(0, 8)
-                            .map(
-                              ([, itemCount]) =>
-                                Number(itemCount) || 0
-                            ),
-                          1
-                        );
+                  <div>
 
-                      const width =
-                        Math.max(
-                          (numericCount /
-                            maxCount) *
-                            100,
-                          numericCount > 0
-                            ? 3
-                            : 0
-                        );
+                    <strong>
+                      {
+                        summary.crypto_assets
+                      }
+                    </strong>
 
-                      return (
+                    <span>
+                      Assets
+                    </span>
+
+                  </div>
+
+                </div>
+
+
+                <div className="algorithm-list">
+
+                  {algorithms
+                    .slice(0, 8)
+                    .map(
+                      (
+                        [
+                          name,
+                          count,
+                        ],
+                        index
+                      ) => (
                         <div
-                          className="algorithm-footprint-row"
+                          className="algorithm-row"
                           key={name}
                         >
 
-                          <div className="algorithm-footprint-label">
+                          <div>
+
                             <span
                               className={`algorithm-dot dot-${index}`}
                             />
+
                             <span>
                               {name}
                             </span>
-                          </div>
-
-                          <div className="algorithm-footprint-track">
-
-                            <div
-                              className={`algorithm-footprint-bar bar-${index}`}
-                              style={{
-                                width:
-                                  `${width}%`,
-                              }}
-                            />
 
                           </div>
+
 
                           <strong>
-                            {numericCount}
+                            {count}
                           </strong>
 
                         </div>
-                      );
-                    }
-                  )
-              ) : (
-                <div className="no-data-message">
-                  No cryptographic algorithms were detected.
+                      )
+                    )}
+
                 </div>
-              )}
 
-            </div>
-
-
-            <div className="algorithm-footprint-footer">
-
-              <div>
-                <span className="legend-dot critical"></span>
-                <span>
-                  Risk classification remains available
-                  in the asset inventory.
-                </span>
-              </div>
-
-              <div>
-                <strong>
-                  {summary.crypto_assets || 0}
-                </strong>
-                <span>
-                  total crypto assets
-                </span>
-              </div>
-
-              <div>
-                <strong>
-                  {quantumExposure}%
-                </strong>
-                <span>
-                  quantum exposure
-                </span>
               </div>
 
             </div>
 
           </section>
 
-         {/* ==================================================
-    MIGRATION TIMING
-================================================== */}
 
-<section className="dashboard-card migration-timing-card">
+          {/* ==================================================
+              BUSINESS + MOSCA
+          ================================================== */}
 
-  <div className="dashboard-card-header">
+          <section className="dashboard-two-column">
 
-    <div>
+            <div className="dashboard-card">
 
-      <span className="section-kicker">
-        MOSCA-STYLE ASSESSMENT
-      </span>
+              <div className="dashboard-card-header">
 
-      <h2>
-        Migration timing
-      </h2>
+                <div>
 
-      <p className="migration-timing-description">
-        Migration urgency is derived by comparing
-        data lifetime and estimated migration effort
-        against the configured planning horizon.
-      </p>
+                  <span className="section-kicker">
+                    BUSINESS CRITICALITY
+                  </span>
 
-    </div>
+                  <h2>
+                    Remediation priority
+                  </h2>
 
-  </div>
+                </div>
 
+                <Target size={19} />
 
-  <div className="mosca-summary">
-
-    <div className="mosca-primary">
-
-      <span>
-        PLANNING HORIZON
-      </span>
-
-      <strong>
-        {
-          summary.planning_horizon_years ||
-          10
-        }
-
-        <small>
-          yrs
-        </small>
-      </strong>
-
-    </div>
+              </div>
 
 
-    <div className="mosca-status-grid">
+              <div className="business-criticality-grid">
 
-      <div className="mosca-status-item action">
+                {[
+                  [
+                    "CRITICAL",
+                    "critical",
+                  ],
+                  [
+                    "HIGH",
+                    "high",
+                  ],
+                  [
+                    "MEDIUM",
+                    "medium",
+                  ],
+                  [
+                    "LOW",
+                    "low",
+                  ],
+                ].map(
+                  ([
+                    label,
+                    className,
+                  ]) => (
+                    <div
+                      className={`business-criticality-card ${className}`}
+                      key={label}
+                    >
 
-        <span>
-          ACTION REQUIRED
-        </span>
+                      <span>
+                        {label}
+                      </span>
 
-        <strong>
-          {
-            moscaCounts.ACTION_REQUIRED
-          }
-        </strong>
+                      <strong>
+                        {
+                          businessCounts[
+                            label
+                          ] || 0
+                        }
+                      </strong>
 
-      </div>
+                      <small>
+                        assets
+                      </small>
 
+                    </div>
+                  )
+                )}
 
-      <div className="mosca-status-item prioritize">
+              </div>
 
-        <span>
-          PRIORITIZE
-        </span>
-
-        <strong>
-          {
-            moscaCounts.PRIORITIZE
-          }
-        </strong>
-
-      </div>
+            </div>
 
 
-      <div className="mosca-status-item plan">
+            <div className="dashboard-card">
 
-        <span>
-          PLAN
-        </span>
+              <div className="dashboard-card-header">
 
-        <strong>
-          {
-            moscaCounts.PLAN
-          }
-        </strong>
+                <div>
 
-      </div>
+                  <span className="section-kicker">
+                    MOSCA-STYLE ASSESSMENT
+                  </span>
 
-    </div>
+                  <h2>
+                    Migration timing
+                  </h2>
 
-  </div>
+                </div>
+
+              </div>
 
 
-  <div className="mosca-note">
+              <div className="mosca-summary">
 
-    <span className="mosca-note-label">
-      ASSESSMENT
-    </span>
+                <div className="mosca-primary">
 
-    <p>
-      Data lifetime plus estimated migration
-      time is compared with the configured
-      planning horizon.
-    </p>
+                  <span>
+                    Planning horizon
+                  </span>
 
-  </div>
+                  <strong>
+                    {
+                      summary.planning_horizon_years ||
+                      10
+                    }{" "}
+                    yrs
+                  </strong>
 
-</section>
+                </div>
+
+
+                <div className="mosca-status-grid">
+
+                  <div>
+
+                    <span>
+                      Action required
+                    </span>
+
+                    <strong>
+                      {
+                        moscaCounts.ACTION_REQUIRED
+                      }
+                    </strong>
+
+                  </div>
+
+
+                  <div>
+
+                    <span>
+                      Prioritize
+                    </span>
+
+                    <strong>
+                      {
+                        moscaCounts.PRIORITIZE
+                      }
+                    </strong>
+
+                  </div>
+
+
+                  <div>
+
+                    <span>
+                      Plan
+                    </span>
+
+                    <strong>
+                      {
+                        moscaCounts.PLAN
+                      }
+                    </strong>
+
+                  </div>
+
+                </div>
+
+              </div>
+
+
+              <div className="mosca-note">
+                Data lifetime plus estimated
+                migration time is compared with
+                the configured planning horizon.
+              </div>
+
+            </div>
+
+          </section>
 
 
           {/* ==================================================
@@ -2183,7 +2108,7 @@ function Dashboard() {
 
                 <p>
                   Click an asset in the inventory to
-                  expand its inspection details inline,
+                  open its complete inspection page,
                   including the recommendation,
                   evidence and exact source location.
                 </p>
@@ -2478,40 +2403,23 @@ function Dashboard() {
                         artifact,
                         filteredIndex
                       ) => {
-
-                        /*
-                         * We need the original artifact
-                         * position because /assets/:index
-                         * uses the original scan result.
-                         */
-
-                        const originalIndex =
-                          artifacts.indexOf(
-                            artifact
-                          );
-
                         return (
-                          <>
-                          <tr
-                            className={`inventory-row ${
-                              expandedArtifactIndex ===
-                              originalIndex
-                                ? "expanded"
-                                : ""
-                            }`}
+                          <Fragment
                             key={`${artifact.file}-${artifact.line}-${artifact.algorithm}-${filteredIndex}`}
-                            onClick={() =>
-                              setExpandedArtifactIndex(
-                                (
-                                  current
-                                ) =>
-                                  current ===
-                                  originalIndex
-                                    ? null
-                                    : originalIndex
-                              )
-                            }
                           >
+                            <tr
+                              className="inventory-row"
+                              onClick={() =>
+                                setExpandedArtifactId(
+                                  expandedArtifactId === artifact.id
+                                    ? null
+                                    : artifact.id
+                                )
+                              }
+                              aria-expanded={
+                                expandedArtifactId === artifact.id
+                              }
+                            >
 
                             <td>
 
@@ -2648,466 +2556,156 @@ function Dashboard() {
 
                               <ChevronDown
                                 size={15}
-                                className={`row-arrow ${
-                                  expandedArtifactIndex ===
-                                  originalIndex
-                                    ? "expanded-arrow"
-                                    : ""
-                                }`}
+                                className="row-arrow"
+                                style={{
+                                  transform:
+                                    expandedArtifactId === artifact.id
+                                      ? "rotate(180deg)"
+                                      : "rotate(0deg)",
+                                  transition:
+                                    "transform 0.2s ease",
+                                }}
                               />
 
                             </td>
 
                           </tr>
 
-
-                          {expandedArtifactIndex ===
-                            originalIndex && (
-                            <tr className="inventory-expanded-row">
-                              <td
-                                colSpan="7"
-                                className="inventory-expanded-cell"
-                              >
-
-                                <div className="asset-dropdown">
-
-                                  <div className="asset-dropdown-header">
-
+                          {expandedArtifactId === artifact.id && (
+                            <tr className="asset-detail-row">
+                              <td colSpan="7">
+                                <div className="asset-detail-dropdown">
+                                  <div className="asset-detail-header">
                                     <div>
-
-                                      <span className="section-kicker">
-                                        INLINE ASSET INSPECTION
-                                      </span>
-
-                                      <h3>
-                                        {
-                                          artifact.algorithm ||
-                                          "Cryptographic Asset"
-                                        }
-                                      </h3>
-
-                                      <p>
-                                        {
-                                          artifact.file ||
-                                          "Unknown file"
-                                        }
-                                        {" · "}
-                                        Line{" "}
-                                        {
-                                          artifact.line ??
-                                          "n/a"
-                                        }
-                                      </p>
-
-                                    </div>
-
-
-                                    <div className="asset-dropdown-status">
-
-                                      <span
-                                        className={getRiskClass(
-                                          artifact.risk
-                                        )}
-                                      >
-                                        {
-                                          artifact.risk ||
-                                          "UNKNOWN"
-                                        }
-                                      </span>
-
-                                      <span
-                                        className={getQuantumClass(
-                                          artifact.quantum_status
-                                        )}
-                                      >
-                                        {
-                                          getQuantumLabel(
-                                            artifact.quantum_status
-                                          )
-                                        }
-                                      </span>
-
-                                      <span
-                                        className={`business-badge ${String(
-                                          artifact.business_criticality ||
-                                          "MEDIUM"
-                                        ).toLowerCase()}`}
-                                      >
-                                        {
-                                          artifact.business_criticality ||
-                                          "MEDIUM"
-                                        }
-                                      </span>
-
-                                    </div>
-
-                                  </div>
-
-
-                                  <div className="asset-dropdown-info-grid">
-
-                                    <div className="asset-dropdown-info">
-                                      <span>ALGORITHM</span>
+                                      <span>ASSET INSPECTION</span>
                                       <strong>
-                                        {
-                                          artifact.algorithm ||
-                                          "Unknown"
-                                        }
+                                        {artifact.algorithm ||
+                                          "Unknown algorithm"}
                                       </strong>
                                     </div>
-
-                                    <div className="asset-dropdown-info">
-                                      <span>KEY SIZE</span>
-                                      <strong>
-                                        {
-                                          artifact.key_size ||
-                                          "—"
-                                        }
-                                      </strong>
-                                    </div>
-
-                                    <div className="asset-dropdown-info">
-                                      <span>MODE</span>
-                                      <strong>
-                                        {
-                                          artifact.mode ||
-                                          "N/A"
-                                        }
-                                      </strong>
-                                    </div>
-
-                                    <div className="asset-dropdown-info">
-                                      <span>FILE TYPE</span>
-                                      <strong>
-                                        {
-                                          artifact.category ||
-                                          "Cryptographic artefact"
-                                        }
-                                      </strong>
-                                    </div>
-
-                                    <div className="asset-dropdown-info">
-                                      <span>LINE</span>
-                                      <strong>
-                                        {
-                                          artifact.line ??
-                                          "n/a"
-                                        }
-                                      </strong>
-                                    </div>
-
-                                    <div className="asset-dropdown-info">
-                                      <span>QUANTUM STATUS</span>
-                                      <strong>
-                                        {
-                                          getQuantumLabel(
-                                            artifact.quantum_status
-                                          )
-                                        }
-                                      </strong>
-                                    </div>
-
-                                  </div>
-
-
-                                  <div className="asset-dropdown-columns">
-
-                                    <div className="asset-dropdown-panel">
-
-                                      <div className="asset-dropdown-panel-heading">
-
-                                        <div>
-                                          <span className="section-kicker">
-                                            SOURCE EVIDENCE
-                                          </span>
-
-                                          <h4>
-                                            Exact detection location
-                                          </h4>
-                                        </div>
-
-                                        <Code2 size={16} />
-
-                                      </div>
-
-
-                                      <div className="asset-source-mini">
-
-                                        <div className="asset-source-mini-header">
-
-                                          <span>
-                                            {
-                                              artifact.file ||
-                                              "Unknown file"
-                                            }
-                                          </span>
-
-                                          <span>
-                                            Line{" "}
-                                            {
-                                              artifact.line ??
-                                              "n/a"
-                                            }
-                                          </span>
-
-                                        </div>
-
-
-                                        <div className="asset-source-mini-body">
-
-                                          <div className="asset-source-mini-line-number">
-                                            {
-                                              artifact.line ??
-                                              "—"
-                                            }
-                                          </div>
-
-                                          <pre>
-                                            {
-                                              artifact.evidence ||
-                                              artifact.source_excerpt ||
-                                              artifact.match ||
-                                              artifact.recommendation ||
-                                              "Detected cryptographic usage. Source evidence was not returned by the current scanner response."
-                                            }
-                                          </pre>
-
-                                        </div>
-
-                                      </div>
-
-
-                                      <div className="asset-evidence-type">
-
-                                        AST / pattern match:
-                                        {" "}
-                                        <strong>
-                                          {
-                                            artifact.confidence ??
-                                            artifact.match_confidence ??
-                                            "Available"
-                                          }
-                                        </strong>
-
-                                      </div>
-
-                                    </div>
-
-
-                                    <div className="asset-dropdown-panel">
-
-                                      <div className="asset-dropdown-panel-heading">
-
-                                        <div>
-                                          <span className="section-kicker">
-                                            RECOMMENDATION
-                                          </span>
-
-                                          <h4>
-                                            Recommended migration action
-                                          </h4>
-                                        </div>
-
-                                        <Lightbulb size={16} />
-
-                                      </div>
-
-
-                                      <div className="asset-recommendation-box">
-
-                                        <strong>
-                                          {
-                                            artifact.recommendation ||
-                                            "Review this cryptographic finding and select a supported migration target based on application requirements."
-                                          }
-                                        </strong>
-
-
-                                        <div className="asset-recommendation-grid">
-
-                                          <div>
-                                            <span>RISK</span>
-                                            <strong>
-                                              {
-                                                artifact.risk ||
-                                                "UNKNOWN"
-                                              }
-                                            </strong>
-                                          </div>
-
-                                          <div>
-                                            <span>BUSINESS</span>
-                                            <strong>
-                                              {
-                                                artifact.business_criticality ||
-                                                "MEDIUM"
-                                              }
-                                            </strong>
-                                          </div>
-
-                                          <div>
-                                            <span>QUANTUM</span>
-                                            <strong>
-                                              {
-                                                getQuantumLabel(
-                                                  artifact.quantum_status
-                                                )
-                                              }
-                                            </strong>
-                                          </div>
-
-                                        </div>
-
-
-                                        {(
-                                          artifact.migration_targets ||
-                                          artifact
-                                            .recommendation_detail
-                                            ?.migration_targets ||
-                                          []
-                                        ).length > 0 && (
-
-                                          <div className="asset-targets">
-
-                                            <span className="asset-target-label">
-                                              MIGRATION TARGETS
-                                            </span>
-
-                                            <div className="asset-target-list">
-
-                                              {(
-                                                artifact.migration_targets ||
-                                                artifact
-                                                  .recommendation_detail
-                                                  ?.migration_targets ||
-                                                []
-                                              ).map(
-                                                (
-                                                  target
-                                                ) => (
-                                                  <span
-                                                    key={
-                                                      target
-                                                    }
-                                                  >
-                                                    {target}
-                                                  </span>
-                                                )
-                                              )}
-
-                                            </div>
-
-                                          </div>
-
-                                        )}
-
-                                      </div>
-
-                                    </div>
-
-                                  </div>
-
-
-                                  <div className="asset-dropdown-context">
-
-                                    <div className="asset-dropdown-context-item">
-                                      <span>FILE</span>
-                                      <strong>
-                                        {
-                                          artifact.file ||
-                                          "Unknown"
-                                        }
-                                      </strong>
-                                    </div>
-
-                                    <div className="asset-dropdown-context-item">
-                                      <span>CATEGORY</span>
-                                      <strong>
-                                        {
-                                          artifact.category ||
-                                          "Unknown"
-                                        }
-                                      </strong>
-                                    </div>
-
-                                    <div className="asset-dropdown-context-item">
-                                      <span>DATA SENSITIVITY</span>
-                                      <strong>
-                                        {
-                                          artifact.data_sensitivity ||
-                                          "Not specified"
-                                        }
-                                      </strong>
-                                    </div>
-
-                                    <div className="asset-dropdown-context-item">
-                                      <span>LIBRARY</span>
-                                      <strong>
-                                        {
-                                          artifact.library ||
-                                          "Not specified"
-                                        }
-                                      </strong>
-                                    </div>
-
-                                    <div className="asset-dropdown-context-item">
-                                      <span>LIBRARY VERSION</span>
-                                      <strong>
-                                        {
-                                          artifact.library_version ||
-                                          "Not specified"
-                                        }
-                                      </strong>
-                                    </div>
-
-                                    <div className="asset-dropdown-context-item">
-                                      <span>CONFIDENCE</span>
-                                      <strong>
-                                        {
-                                          artifact.confidence ||
-                                          artifact.match_confidence ||
-                                          "Not specified"
-                                        }
-                                      </strong>
-                                    </div>
-
-                                  </div>
-
-
-                                  <div className="asset-dropdown-footer">
-
-                                    <span>
-                                      Inline inspection preserves
-                                      the current scan result and
-                                      does not navigate away from
-                                      the dashboard.
-                                    </span>
 
                                     <button
                                       type="button"
+                                      className="asset-detail-close"
+                                      aria-label="Close asset inspection"
                                       onClick={(event) => {
                                         event.stopPropagation();
-                                        setExpandedArtifactIndex(
-                                          null
-                                        );
+                                        setExpandedArtifactId(null);
                                       }}
                                     >
-                                      <ChevronDown size={13} />
-                                      Collapse
+                                      <ChevronDown
+                                        size={17}
+                                        style={{
+                                          transform:
+                                            "rotate(180deg)",
+                                        }}
+                                      />
                                     </button>
-
                                   </div>
 
-                                </div>
+                                  <div className="asset-detail-grid">
+                                    <div>
+                                      <span>FILE</span>
+                                      <strong>
+                                        {artifact.file ||
+                                          "Unknown file"}
+                                      </strong>
+                                    </div>
 
+                                    <div>
+                                      <span>SOURCE LINE</span>
+                                      <strong>
+                                        {artifact.line ?? "n/a"}
+                                      </strong>
+                                    </div>
+
+                                    <div>
+                                      <span>CATEGORY</span>
+                                      <strong>
+                                        {artifact.category ||
+                                          "Unknown"}
+                                      </strong>
+                                    </div>
+
+                                    <div>
+                                      <span>KEY SIZE</span>
+                                      <strong>
+                                        {artifact.key_size ?? "—"}
+                                      </strong>
+                                    </div>
+
+                                    <div>
+                                      <span>MODE</span>
+                                      <strong>
+                                        {artifact.mode || "N/A"}
+                                      </strong>
+                                    </div>
+
+                                    <div>
+                                      <span>QUANTUM STATUS</span>
+                                      <strong>
+                                        {getQuantumLabel(
+                                          artifact.quantum_status
+                                        )}
+                                      </strong>
+                                    </div>
+
+                                    <div>
+                                      <span>RISK</span>
+                                      <strong>
+                                        {artifact.risk || "UNKNOWN"}
+                                      </strong>
+                                    </div>
+
+                                    <div>
+                                      <span>CRITICALITY</span>
+                                      <strong>
+                                        {artifact.business_criticality ||
+                                          "MEDIUM"}
+                                      </strong>
+                                    </div>
+                                  </div>
+
+                                  {artifact.risk_reason && (
+                                    <div className="asset-detail-reason">
+                                      <span>RISK ASSESSMENT</span>
+                                      <p>
+                                        {artifact.risk_reason}
+                                      </p>
+                                    </div>
+                                  )}
+
+                                  {artifact.recommendation && (
+                                    <div className="asset-detail-recommendation">
+                                      <span>RECOMMENDATION</span>
+                                      <strong>
+                                        {artifact.recommendation?.alternative ||
+                                          "Review required"}
+                                      </strong>
+                                      {artifact.recommendation?.rationale && (
+                                        <p>
+                                          {artifact.recommendation.rationale}
+                                        </p>
+                                      )}
+                                    </div>
+                                  )}
+
+                                  {artifact.mosca_math && (
+                                    <div className="asset-detail-mosca">
+                                      <span>MIGRATION ASSESSMENT</span>
+                                      <strong>
+                                        {artifact.mosca_math}
+                                      </strong>
+                                    </div>
+                                  )}
+                                </div>
                               </td>
                             </tr>
                           )}
-
-                          </>
-                        );
-                      }
-                    )
+                        </Fragment>
+                      );
+                    }
+                  )
 
                   )}
 

@@ -48,3 +48,25 @@ export async function scanFile(file) {
     );
   }
 }
+
+// The backend currently exposes scan endpoints only. Use the browser's
+// print-to-PDF flow until a dedicated server-side PDF endpoint is added.
+export async function generatePdfReport() {
+  if (
+    typeof window === "undefined" ||
+    typeof window.print !== "function"
+  ) {
+    throw new Error(
+      "PDF export is only available in a browser."
+    );
+  }
+
+  const previousTitle = document.title;
+  document.title = "ecdat-scan-report";
+
+  try {
+    window.print();
+  } finally {
+    document.title = previousTitle;
+  }
+}

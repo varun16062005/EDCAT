@@ -1,8 +1,7 @@
-const API_BASE_URL =
-  (
-    import.meta.env.VITE_API_BASE_URL ||
-    "http://127.0.0.1:8000"
-  ).replace(/\/+$/, "");
+const API_BASE_URL = (
+  import.meta.env.VITE_API_BASE_URL ||
+  "http://127.0.0.1:8000"
+).replace(/\/+$/, "");
 
 
 /* ============================================================
@@ -11,24 +10,18 @@ const API_BASE_URL =
 
 export async function scanFile(file) {
   if (!file) {
-    throw new Error(
-      "No file selected."
-    );
+    throw new Error("No file selected.");
   }
 
-  const formData =
-    new FormData();
+  const formData = new FormData();
 
-  formData.append(
-    "file",
-    file
-  );
+  formData.append("file", file);
 
   let response;
 
   try {
     response = await fetch(
-      `${API_BASE_URL}/scan`,
+      `${API_BASE_URL}/api/scans/`,
       {
         method: "POST",
         body: formData,
@@ -40,80 +33,50 @@ export async function scanFile(file) {
     );
   }
 
-
-  /* ----------------------------------------------------------
-     BACKEND ERROR
-     ---------------------------------------------------------- */
-
-  if (!response.ok) {
-    let message =
-      "ECDAT scan failed.";
-
-    try {
-      const errorData =
-        await response.json();
-
-      if (
-        errorData?.detail
-      ) {
-        message = String(
-          errorData.detail
-        );
-      }
-    } catch {
-      // Keep default error message.
-    }
-
-    throw new Error(
-      message
-    );
-  }
-
-
-  /* ----------------------------------------------------------
-     SCAN RESPONSE
-     ---------------------------------------------------------- */
+  let data = null;
 
   try {
-    return await response.json();
+    data = await response.json();
   } catch {
+    // Keep data as null when the response is not JSON.
+  }
+
+  if (!response.ok) {
     throw new Error(
-      "ECDAT returned an invalid scan response."
+      data?.detail ||
+        `ECDAT scan failed (${response.status}).`
     );
   }
+
+  if (!data) {
+    throw new Error(
+      "ECDAT returned an empty scan response."
+    );
+  }
+
+  return data;
 }
 
 
 /* ============================================================
    PDF REPORT
-   ============================================================
-
-   Your current backend does NOT expose a dedicated PDF
-   endpoint. The existing application therefore uses the
-   browser print dialog to create/save the report as PDF.
-
-   This preserves that functionality.
    ============================================================ */
 
 export async function generatePdfReport() {
   if (
-    typeof window ===
-      "undefined" ||
-    typeof window.print !==
-      "function"
+    typeof window === "undefined" ||
+    typeof window.print !== "function"
   ) {
     throw new Error(
       "PDF export is only available in a browser."
     );
   }
 
-
   const previousTitle =
     document.title;
 
   document.title =
     "ecdat-scan-report";
-
 
   try {
     window.print();

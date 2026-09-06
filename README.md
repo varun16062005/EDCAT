@@ -1,3 +1,4 @@
+
 # ECDAT — Cryptographic Discovery & Assessment Tool
 
 ECDAT is a prototype platform for discovering cryptographic artefacts in uploaded software projects and files, building a cryptographic inventory, assessing quantum-related risk, and presenting migration recommendations through an interactive web dashboard.

@@ -3,9 +3,7 @@ from tempfile import TemporaryDirectory
 from typing import Any, Dict
 from zipfile import BadZipFile, ZipFile, is_zipfile
 import tarfile
-import os
 
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi import (
     FastAPI,
     File,

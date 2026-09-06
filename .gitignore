@@ -1,0 +1,24 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+backend/venv/
+
+# Node
+node_modules/
+
+# Vite
+frontend/dist/
+
+# Environment files
+.env
+.env.*
+!.env.example

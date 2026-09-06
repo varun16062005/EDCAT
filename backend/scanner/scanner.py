@@ -1,0 +1,508 @@
+import ssl
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from .crypto_rules import CRYPTO_RULES
+from .file_detector import detect_file_type
+
+
+MAX_TEXT_FILE_SIZE = 10 * 1024 * 1024
+
+
+def read_text_safely(
+    file_path: Path,
+) -> Optional[str]:
+    try:
+        if file_path.stat().st_size > MAX_TEXT_FILE_SIZE:
+            return None
+
+        return file_path.read_text(
+            encoding="utf-8",
+            errors="ignore",
+        )
+    except (OSError, UnicodeError):
+        return None
+
+
+def detect_pem_type(
+    content: str,
+) -> Optional[str]:
+    labels = [
+        "BEGIN CERTIFICATE",
+        "BEGIN PRIVATE KEY",
+        "BEGIN ENCRYPTED PRIVATE KEY",
+        "BEGIN RSA PRIVATE KEY",
+        "BEGIN EC PRIVATE KEY",
+        "BEGIN DSA PRIVATE KEY",
+        "BEGIN PUBLIC KEY",
+        "BEGIN RSA PUBLIC KEY",
+        "BEGIN OPENSSH PRIVATE KEY",
+    ]
+
+    for label in labels:
+        if label in content:
+            return label
+
+    return None
+
+
+def inspect_real_crypto_file(
+    file_path: Path,
+    relative_path: str,
+    file_type: str,
+) -> List[Dict[str, Any]]:
+    """
+    Inspect actual certificate/key files without
+    exposing private-key contents.
+    """
+
+    artifacts = []
+
+    if file_type != "certificate/key":
+        return artifacts
+
+    try:
+        raw = file_path.read_bytes()
+
+        sample = raw[:2 * 1024 * 1024].decode(
+            "latin-1",
+            errors="ignore",
+        )
+
+    except OSError:
+        return artifacts
+
+    pem_type = detect_pem_type(sample)
+
+    if pem_type == "BEGIN CERTIFICATE":
+        metadata = {}
+
+        try:
+            metadata = ssl._ssl._test_decode_cert(
+                str(file_path)
+            )
+        except Exception:
+            metadata = {}
+
+        subject = metadata.get(
+            "subject",
+            "Unknown subject",
+        )
+
+        issuer = metadata.get(
+            "issuer",
+            "Unknown issuer",
+        )
+
+        not_after = metadata.get(
+            "notAfter",
+            "Unknown expiry",
+        )
+
+        usage = (
+            "X.509 certificate"
+            f" | Subject: {subject}"
+            f" | Issuer: {issuer}"
+            f" | Expiry: {not_after}"
+        )
+
+        artifacts.append(
+            {
+                "file": relative_path,
+                "line": 1,
+                "code": "Certificate body hidden",
+                "algorithm": "X.509 Certificate",
+                "algorithm_family": "PKI",
+                "category": "Certificate",
+                "usage": usage,
+                "quantum_status": "REVIEW",
+                "risk": "MEDIUM",
+                "recommendation": (
+                    "Inventory the certificate's public-key "
+                    "algorithm and plan PQC or hybrid "
+                    "certificate migration where required."
+                ),
+            }
+        )
+
+        return artifacts
+
+    if pem_type in {
+        "BEGIN RSA PRIVATE KEY",
+        "BEGIN ENCRYPTED PRIVATE KEY",
+    }:
+        artifacts.append(
+            {
+                "file": relative_path,
+                "line": 1,
+                "code": "Private key material detected; content hidden",
+                "algorithm": "RSA Private Key",
+                "algorithm_family": "RSA",
+                "category": "Private Key",
+                "usage": "Private-key material",
+                "quantum_status": "VULNERABLE",
+                "risk": "CRITICAL",
+                "recommendation": (
+                    "Protect the key material and plan "
+                    "migration to a PQC or hybrid signature "
+                    "and key-establishment architecture."
+                ),
+            }
+        )
+
+        return artifacts
+
+    if pem_type == "BEGIN EC PRIVATE KEY":
+        artifacts.append(
+            {
+                "file": relative_path,
+                "line": 1,
+                "code": "Private key material detected; content hidden",
+                "algorithm": "EC Private Key",
+                "algorithm_family": "Elliptic Curve",
+                "category": "Private Key",
+                "usage": "Elliptic-curve private-key material",
+                "quantum_status": "VULNERABLE",
+                "risk": "CRITICAL",
+                "recommendation": (
+                    "Plan migration to ML-DSA or a hybrid "
+                    "signature architecture."
+                ),
+            }
+        )
+
+        return artifacts
+
+    if pem_type == "BEGIN DSA PRIVATE KEY":
+        artifacts.append(
+            {
+                "file": relative_path,
+                "line": 1,
+                "code": "Private key material detected; content hidden",
+                "algorithm": "DSA Private Key",
+                "algorithm_family": "DSA",
+                "category": "Private Key",
+                "usage": "DSA private-key material",
+                "quantum_status": "VULNERABLE",
+                "risk": "CRITICAL",
+                "recommendation": (
+                    "Plan migration toward ML-DSA."
+                ),
+            }
+        )
+
+        return artifacts
+
+    if pem_type == "BEGIN OPENSSH PRIVATE KEY":
+        artifacts.append(
+            {
+                "file": relative_path,
+                "line": 1,
+                "code": "OpenSSH private-key material detected; content hidden",
+                "algorithm": "OpenSSH Private Key",
+                "algorithm_family": "SSH",
+                "category": "Private Key",
+                "usage": "SSH private-key material",
+                "quantum_status": "REVIEW",
+                "risk": "HIGH",
+                "recommendation": (
+                    "Identify the underlying SSH public-key "
+                    "algorithm and plan an appropriate PQC "
+                    "or hybrid migration."
+                ),
+            }
+        )
+
+        return artifacts
+
+    if pem_type in {
+        "BEGIN PUBLIC KEY",
+        "BEGIN RSA PUBLIC KEY",
+    }:
+        artifacts.append(
+            {
+                "file": relative_path,
+                "line": 1,
+                "code": "Public key detected",
+                "algorithm": "Public Key",
+                "algorithm_family": "PKI",
+                "category": "Public Key",
+                "usage": "Public-key material",
+                "quantum_status": "REVIEW",
+                "risk": "MEDIUM",
+                "recommendation": (
+                    "Identify the public-key algorithm and "
+                    "evaluate PQC or hybrid migration."
+                ),
+            }
+        )
+
+    return artifacts
+
+
+def find_crypto_artifacts(
+    file_path: Path,
+    relative_path: str,
+) -> List[Dict[str, Any]]:
+    artifacts = []
+
+    file_type = detect_file_type(
+        file_path
+    )
+
+    real_crypto_artifacts = (
+        inspect_real_crypto_file(
+            file_path=file_path,
+            relative_path=relative_path,
+            file_type=file_type,
+        )
+    )
+
+    artifacts.extend(
+        real_crypto_artifacts
+    )
+
+    content = read_text_safely(
+        file_path
+    )
+
+    if content is None:
+        return artifacts
+
+    lines = content.splitlines()
+
+    for rule in CRYPTO_RULES:
+        matched_lines = set()
+
+        for line_number, line in enumerate(
+            lines,
+            start=1,
+        ):
+            lower_line = line.lower()
+
+            for pattern in rule[
+                "patterns"
+            ]:
+                if pattern.lower() in lower_line:
+                    matched_lines.add(
+                        line_number
+                    )
+                    break
+
+        for line_number in sorted(
+            matched_lines
+        ):
+            source_line = (
+                lines[line_number - 1]
+                .strip()
+            )
+
+            artifact = {
+                "file": relative_path,
+                "line": line_number,
+                "code": source_line[:500],
+                "algorithm": rule[
+                    "algorithm"
+                ],
+                "algorithm_family": rule[
+                    "family"
+                ],
+                "category": rule[
+                    "category"
+                ],
+                "usage": rule[
+                    "usage"
+                ],
+                "quantum_status": rule[
+                    "quantum_status"
+                ],
+                "risk": rule[
+                    "risk"
+                ],
+                "recommendation": rule[
+                    "recommendation"
+                ],
+            }
+
+            duplicate = any(
+                existing["file"]
+                == artifact["file"]
+                and existing["line"]
+                == artifact["line"]
+                and existing["algorithm"]
+                == artifact[
+                    "algorithm"
+                ]
+                for existing in artifacts
+            )
+
+            if not duplicate:
+                artifacts.append(
+                    artifact
+                )
+
+    return artifacts
+
+
+def create_summary(
+    files: List[Dict[str, Any]],
+    artifacts: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    critical = sum(
+        1
+        for item in artifacts
+        if item.get("risk")
+        == "CRITICAL"
+    )
+
+    high = sum(
+        1
+        for item in artifacts
+        if item.get("risk")
+        == "HIGH"
+    )
+
+    medium = sum(
+        1
+        for item in artifacts
+        if item.get("risk")
+        == "MEDIUM"
+    )
+
+    low = sum(
+        1
+        for item in artifacts
+        if item.get("risk")
+        == "LOW"
+    )
+
+    quantum_vulnerable = sum(
+        1
+        for item in artifacts
+        if item.get(
+            "quantum_status"
+        )
+        == "VULNERABLE"
+    )
+
+    legacy_weak = sum(
+        1
+        for item in artifacts
+        if item.get(
+            "quantum_status"
+        )
+        == "LEGACY_WEAK"
+    )
+
+    if critical > 0:
+        posture = {
+            "key": "CRITICAL",
+            "label": "Highly Critical",
+            "description": (
+                "Immediate remediation is recommended. "
+                "Critical cryptographic findings are present."
+            ),
+        }
+    elif (
+        high > 0
+        or quantum_vulnerable > 0
+    ):
+        posture = {
+            "key": "HIGH",
+            "label": "High Risk",
+            "description": (
+                "Quantum-vulnerable or high-risk "
+                "cryptographic assets require migration planning."
+            ),
+        }
+    elif (
+        medium > 0
+        or legacy_weak > 0
+    ):
+        posture = {
+            "key": "ELEVATED",
+            "label": "Elevated",
+            "description": (
+                "Weak or legacy cryptography was identified "
+                "and should be reviewed."
+            ),
+        }
+    else:
+        posture = {
+            "key": "NORMAL",
+            "label": "Normal",
+            "description": (
+                "No critical or high-risk cryptographic "
+                "findings were identified by the scanner."
+            ),
+        }
+
+    return {
+        "files_scanned": len(files),
+        "crypto_assets": len(artifacts),
+        "critical": critical,
+        "high": high,
+        "medium": medium,
+        "low": low,
+        "quantum_vulnerable": quantum_vulnerable,
+        "legacy_weak": legacy_weak,
+        "security_posture": posture,
+    }
+
+
+def scan_directory(
+    root_directory: Path,
+) -> Dict[str, Any]:
+    files = []
+    artifacts = []
+
+    for file_path in sorted(
+        root_directory.rglob("*")
+    ):
+        if not file_path.is_file():
+            continue
+
+        try:
+            relative_path = (
+                file_path
+                .relative_to(
+                    root_directory
+                )
+                .as_posix()
+            )
+
+            file_type = detect_file_type(
+                file_path
+            )
+
+            size = file_path.stat().st_size
+
+        except OSError:
+            continue
+
+        files.append(
+            {
+                "name": file_path.name,
+                "path": relative_path,
+                "type": file_type,
+                "size": size,
+            }
+        )
+
+        detected = find_crypto_artifacts(
+            file_path=file_path,
+            relative_path=relative_path,
+        )
+
+        artifacts.extend(
+            detected
+        )
+
+    return {
+        "summary": create_summary(
+            files,
+            artifacts,
+        ),
+        "files": files,
+        "artifacts": artifacts,
+    }

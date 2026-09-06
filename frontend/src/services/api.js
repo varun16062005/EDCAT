@@ -1,12 +1,28 @@
-const API_BASE_URL = "http://127.0.0.1:8000";
+const API_BASE_URL =
+  (
+    import.meta.env.VITE_API_BASE_URL ||
+    "http://127.0.0.1:8000"
+  ).replace(/\/+$/, "");
+
+
+/* ============================================================
+   SCAN FILE
+   ============================================================ */
 
 export async function scanFile(file) {
   if (!file) {
-    throw new Error("No file selected.");
+    throw new Error(
+      "No file selected."
+    );
   }
 
-  const formData = new FormData();
-  formData.append("file", file);
+  const formData =
+    new FormData();
+
+  formData.append(
+    "file",
+    file
+  );
 
   let response;
 
@@ -20,25 +36,43 @@ export async function scanFile(file) {
     );
   } catch {
     throw new Error(
-      "Cannot connect to the ECDAT backend. Make sure FastAPI is running on port 8000."
+      "Cannot connect to the ECDAT backend. Make sure the backend is running and the API URL is correct."
     );
   }
 
+
+  /* ----------------------------------------------------------
+     BACKEND ERROR
+     ---------------------------------------------------------- */
+
   if (!response.ok) {
-    let message = "ECDAT scan failed.";
+    let message =
+      "ECDAT scan failed.";
 
     try {
-      const errorData = await response.json();
+      const errorData =
+        await response.json();
 
-      if (errorData?.detail) {
-        message = String(errorData.detail);
+      if (
+        errorData?.detail
+      ) {
+        message = String(
+          errorData.detail
+        );
       }
     } catch {
-      // Keep the default error message.
+      // Keep default error message.
     }
 
-    throw new Error(message);
+    throw new Error(
+      message
+    );
   }
+
+
+  /* ----------------------------------------------------------
+     SCAN RESPONSE
+     ---------------------------------------------------------- */
 
   try {
     return await response.json();
@@ -49,24 +83,42 @@ export async function scanFile(file) {
   }
 }
 
-// The backend currently exposes scan endpoints only. Use the browser's
-// print-to-PDF flow until a dedicated server-side PDF endpoint is added.
+
+/* ============================================================
+   PDF REPORT
+   ============================================================
+
+   Your current backend does NOT expose a dedicated PDF
+   endpoint. The existing application therefore uses the
+   browser print dialog to create/save the report as PDF.
+
+   This preserves that functionality.
+   ============================================================ */
+
 export async function generatePdfReport() {
   if (
-    typeof window === "undefined" ||
-    typeof window.print !== "function"
+    typeof window ===
+      "undefined" ||
+    typeof window.print !==
+      "function"
   ) {
     throw new Error(
       "PDF export is only available in a browser."
     );
   }
 
-  const previousTitle = document.title;
-  document.title = "ecdat-scan-report";
+
+  const previousTitle =
+    document.title;
+
+  document.title =
+    "ecdat-scan-report";
+
 
   try {
     window.print();
   } finally {
-    document.title = previousTitle;
+    document.title =
+      previousTitle;
   }
 }

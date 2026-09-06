@@ -809,3 +809,9 @@ ECDAT is currently a prototype for demonstration, development, and research purp
 ## License
 
 Add the appropriate project license before public distribution.
+
+cd frontend 
+npm run dev
+
+cd backend
+python -m uvicorn app:app --reload --port 8000
